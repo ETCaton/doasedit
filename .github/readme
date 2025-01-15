@@ -9,12 +9,11 @@ SYNOPSIS
 DESCRIPTION
     doasedit allows a permitted user to edit root-owned files by running an unpriviledged editor.
 
-INSTALLATION
-    Globally (for all users):
-
-        $ curl -sL http://git.io/doasedit.raw | doas tee /usr/local/bin/doasedit
-        $ curl -sL http://git.io/doasedit.readlinkf_posix.raw | doas tee /usr/local/bin/readlinkf_posix
-        $ doas chmod +x /usr/local/bin/doasedit && doas chmod +x /usr/local/bin/readlinkf_posix
+    This fork inlines readlinkf_posix from upstream's upstream, performs minor formatting, and
+    passes shellcheck. It also removes upstream's repeated use of `doas` invocations. If you
+    require elevated permissions to even access the file you're attempting to edit, refer to
+    upstream. `doas` will be only invoked once the file is attempting to be saved, rather than
+    eagerly while attempting to access said file's contents.
 
 EXAMPLES
     To run an editor as non-root:

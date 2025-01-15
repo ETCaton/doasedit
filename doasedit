@@ -1,16 +1,17 @@
 #!/usr/bin/env sh
 
 # Name:         doasedit
-# Link:         git.io/doasedit
+# Link:         github.com/ETCaton/doasedit
 # Description:  doas equivalent to sudoedit
-
-# Dependencies: opendoas <https://github.com/Duncaen/OpenDoas> or doas <https://cvsweb.openbsd.org/src/usr.bin/doas/>
-
-# Author:       Stanislav <git.io/monesonn>
+#
+# Author:       ETCaton <github.com/ETCaton>
 # Licence:      ISC
-
-# Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies
-# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE
+#
+# Original upstream `doasedit` implementation: https://github.com/nix-42/doasedit (ISC)
+# Original upstream `readlinkf_posix` implementation: https://github.com/ko1nksm/readlinkf (CC0)
+#
+# Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies.
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 # Be sure /tmp as tmp directory by setting TMPDIR env
 export TMPDIR=/tmp
@@ -20,24 +21,24 @@ export RANDOM_DEVICE=/dev/urandom
 
 # Throw information message
 msg() {
-    printf "%s\n" "doasedit: ${1}"
+	printf "%s\n" "doasedit: ${1}"
 }
 
 # Throw error message
 error() {
-    printf "%s\n" "doasedit: ${1}" >&2
-    exit 1
+	printf "%s\n" "doasedit: ${1}" >&2
+	exit 1
 }
 
 # Catch arguments.
 if [ -n "${2}" ]; then
-    error "expected only one argument"
+	error "expected only one argument"
 elif [ -z "${1}" ]; then
-    error "no file path provided"
+	error "no file path provided"
 elif [ "$(id -u)" -eq 0 ]; then
-    error "cannot be run as root"
+	error "may not be run as root"
 elif [ -d "${1}" ]; then
-    error "${1} is a directory"
+	error "${1} is a directory"
 fi
 
 # Safe shell options
@@ -45,28 +46,64 @@ set -eu
 
 # The name of the function speaks for itself
 randstr() {
-    if [ -c "${RANDOM_DEVICE}" ] && [ $(command -v od) ]; then
-        # Use od utility if /dev/random or /dev/urandom exists, od is used in most of systems
-        printf "%s" "$(od -vN4 -An -tx1 ${RANDOM_DEVICE} | tr -d ' \n')" || error "cannot generate alphanumeric string"
-    elif [ $(command -v awk) ]; then
-        # Most POSIX way I found to generate alphanumeric string via awk (POSIX)
-        seed=$(date +%s)
-        printf "%s" "$(awk -v seed=${seed} 'BEGIN { srand(seed); s=""; chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"; for(i=0;i<8;i++) { s=s""substr(chars,int(rand()*62),1); } print s }')" || error "cannot generate alphanumeric string"
-    else
-        # Just plain date, numeric only
-        printf "%s" "$(date %s)" || error "cannot generate alphanumeric string"
-    fi
+	if [ -c "${RANDOM_DEVICE}" ] && [ "$(command -v od)" ]; then
+		# Use od utility if /dev/random or /dev/urandom exists, od is used in most of systems
+		printf "%s" "$(od -vN4 -An -tx1 ${RANDOM_DEVICE} | tr -d ' \n')" || error "cannot generate alphanumeric string"
+	else
+		# Just plain date, numeric only
+		printf "%s" "$(date %s)" || error "cannot generate alphanumeric string"
+	fi
 }
 
 # Create temporary directory
 mktempd() {
-    dir="${TMPDIR}/$(randstr).tmp" && mkdir "${dir}"
-    [ -d "${dir}" ] && printf "${dir}" || error "cannot create temporary directory"
+	dir="${TMPDIR}/$(randstr).tmp" && mkdir "${dir}"
+	if [ ! -d "${dir}" ]; then
+		error "cannot create temporary directory"
+	fi
+	printf "%s" "$dir"
+}
+
+readlinkf_posix() {
+	# https://github.com/ko1nksm/readlinkf/blob/39185f1d589793224bc400f5233cd80c171a9baa/readlinkf.sh#L4-L37
+	# Relicensed under CC0 for some reason, but compatible with this project's ISC license
+	[ "${1:-}" ] || return 1
+	max_symlinks=40
+	CDPATH='' # to avoid changing to an unexpected directory
+
+	target=$1
+	[ -e "${target%/}" ] || target=${1%"${1##*[!/]}"} # trim trailing slashes
+	[ -d "${target:-/}" ] && target="$target/"
+
+	cd -P . 2>/dev/null || return 1
+	while [ "$max_symlinks" -ge 0 ] && max_symlinks=$((max_symlinks - 1)); do
+		if [ ! "$target" = "${target%/*}" ]; then
+			case $target in
+			/*) cd -P "${target%/*}/" 2>/dev/null || break ;;
+			*) cd -P "./${target%/*}" 2>/dev/null || break ;;
+			esac
+			target=${target##*/}
+		fi
+
+		if [ ! -L "$target" ]; then
+			target="${PWD%/}${target:+/}${target}"
+			printf '%s\n' "${target:-/}"
+			return 0
+		fi
+
+		# `ls -dl` format: "%s %u %s %s %u %s %s -> %s\n",
+		#   <file mode>, <number of links>, <owner name>, <group name>,
+		#   <size>, <date and time>, <pathname of link>, <contents of link>
+		# https://pubs.opengroup.org/onlinepubs/9699919799/utilities/ls.html
+		link=$(ls -dl -- "$target" 2>/dev/null) || break
+		target=${link#*" $target -> "}
+	done
+	return 1
 }
 
 # Absolute path to the source file (file for editing)
 # readlinkf_posix utility should be provided from the same repository as doasedit
-src="$(doas readlinkf_posix "${1}")"
+src=$(readlinkf_posix "${1}")
 
 # Filename for the source file
 filename="${src##*/}"
@@ -74,9 +111,9 @@ filename="${src##*/}"
 # If filename have extension then also use it for a temporary file
 # It's kinda useful for editors, that have plugins or something else for certain file extensions
 if [ "$filename" = "${filename##*.}" ]; then
-    file_extension=""
+	file_extension=""
 else
-    file_extension="${filename##*.}"
+	file_extension="${filename##*.}"
 fi
 
 # Create a temporary directory
@@ -90,44 +127,41 @@ suffix=$(randstr)
 
 # Create a temporary file for the source file in a temporary directory
 if [ -z "${file_extension}" ]; then
-    tmp_f="${tmp_d}/${filename}.${suffix}"
+	tmp_f="${tmp_d}/${filename}.${suffix}"
 else
-    tmp_f="${tmp_d}/${filename%%.*}${suffix}.${file_extension}"
+	tmp_f="${tmp_d}/${filename%%.*}${suffix}.${file_extension}"
 fi
 
 # File writeability condition
 if [ -w "$src" ]; then
-    error "$filename: editing files in a writable directory is not permitted"
+	error "$filename: editing files in a writable directory is not permitted"
 fi
 
 # Other conditions
-if [ ! -r "${src}" ] && doas [ -f ${src} ]; then
-    doas cat "${src}" > "${tmp_f}" 2>/dev/null || error "cannot transfer the content of the file to temporary one"
-elif [ -r "${src}" ]; then
-    cat "${src}" > "${tmp_f}" 2>/dev/null || error "cannot transfer the content of the file to temporary one"
+if [ -r "${src}" ]; then
+	cat "${src}" >"${tmp_f}" 2>/dev/null || error "cannot transfer the content of the file to temporary one"
 fi
 
 # Create copy of the temporary file
 tmp_cf="${tmp_f}.copy"
 
 # Move the contents of a temporary file to its copy for later comparison
-cat "${tmp_f}" > "${tmp_cf}"
+cat "${tmp_f}" >"${tmp_cf}"
 
 # Editing the file by the user using the default editor, if not specified, the vi is used
 ${EDITOR:-vi} "${tmp_f}"
 
 # Compare the temporary file and the temporary copy
 if cmp -s "${tmp_f}" "${tmp_cf}"; then
-    msg "${filename} unchanged"
-    exit 0
+	msg "${filename} unchanged"
+	exit 0
 else
-    # Replace the source file with temporary, repeats three times if it fails
-    attempt=0
-    until doas cp -f "${tmp_f}" "${src}"; do
-        attempt=$((attempt + 1))
-        [ "${attempt}" -ge 3 ] && error "cannot accept changes"
-    done
-    msg "${filename} changes are accepted"
-    exit 0
+	# Replace the source file with temporary, repeats three times if it fails
+	attempt=0
+	until doas cp -f "${tmp_f}" "${src}"; do
+		attempt=$((attempt + 1))
+		[ "${attempt}" -ge 3 ] && error "cannot accept changes"
+	done
+	msg "${filename} changes are accepted"
+	exit 0
 fi
-
